@@ -6,9 +6,9 @@ SentinelOps adheres to a **Modular Monolith** pattern deployed across a multi-ti
 
 ### Physical vs. Virtual Topology
 - **Host Machine**: Windows 11 (Development, Git, IDE, Browser Client).
-- **Virtualization**: Oracle VirtualBox.
+- **Virtualization**: Oracle VirtualBox 7.x.
 - **VM 1: SOC Server (Ubuntu Server 24.04 LTS)**: Centralized SIEM, custom SentinelOps backend, and relational datastore.
-- **VM 2: Victim Endpoint (Ubuntu 24.04 LTS)**: Target asset with Wazuh Agent and Atomic Red Team harness.
+- **VM 2: Victim Endpoint (Ubuntu 24.04 LTS)**: Target asset with Wazuh 4.14.10 Agent and Atomic Red Team harness.
 - **VM 3: Attacker (Kali Linux - Optional)**: Secondary offensive testing node used sequentially.
 
 ```mermaid
@@ -24,17 +24,17 @@ flowchart TD
     end
 
     subgraph Net_Internal["Isolated Lab Internal Network (172.28.0.0/24 - VirtualBox 'intnet')"]
-        Victim["VM 2: Victim Endpoint (Ubuntu 24.04)\nIP: 172.28.0.20\nWazuh 4.8 Agent + Auditd + ART"]
+        Victim["VM 2: Victim Endpoint (Ubuntu 24.04)\nIP: 172.28.0.20\nWazuh 4.14.10 Agent + Auditd + ART"]
         Attacker["VM 3: Attacker (Kali Linux - Optional)\nIP: 172.28.0.30\nSequential Execution Only"]
         Victim <-->|Wazuh Protocol: TCP 1514\nAgent Enrollment: TCP 1515| SOC_Server
         Attacker -.->|Lab Simulation Exploits| Victim
     end
 
     subgraph SOC_Server["VM 1: SOC Server (Ubuntu Server 24.04 LTS - 192.168.56.10 / 172.28.0.10)"]
-        subgraph SIEM_Stack["Wazuh 4.8 SIEM Components"]
-            WazuhMgr["Wazuh Manager 4.8\n(Rule Engine, Analysisd, Remoted, AR)"]
-            WazuhIdx["Wazuh Indexer 4.8\n(OpenSearch Engine - JVM Heap: 1.5G)"]
-            WazuhDsh["Wazuh Dashboard 4.8\n(OpenSearch Dashboards: Port 443/5601)"]
+        subgraph SIEM_Stack["Wazuh 4.14.10 SIEM Components"]
+            WazuhMgr["Wazuh Manager 4.14.10\n(Analysisd, Remoted, Execd, AR)"]
+            WazuhIdx["Wazuh Indexer 4.14.10\n(OpenSearch Engine - JVM Heap: 1.5G)"]
+            WazuhDsh["Wazuh Dashboard 4.14.10\n(OpenSearch Dashboards: Port 443/5601)"]
             WazuhMgr -->|Filebeat mTLS 9200| WazuhIdx
             WazuhDsh -->|HTTPS 9200 / 55000| WazuhIdx
         end
@@ -55,25 +55,25 @@ flowchart TD
 
 ---
 
-## 2. Pinned Wazuh Architecture & Protocol Details (Wazuh 4.8)
+## 2. Pinned Wazuh Architecture & Protocol Details (Wazuh 4.14.10)
 
-SentinelOps pins **Wazuh 4.8 LTS** across all SIEM components to guarantee predictable protocol behavior and prevent feature mismatch.
+SentinelOps pins **Wazuh 4.14.10** across all SIEM components to guarantee predictable protocol behavior and prevent feature mismatch.
 
 ### 2.1 Communication Links & Security Standards
 
-| Communication Link | Transport Protocol | Cryptography / Authentication Standard | Official Wazuh 4.8 Mechanism |
+| Communication Link | Transport Protocol | Cryptography / Authentication Standard | Official Wazuh 4.14.10 Mechanism |
 | :--- | :--- | :--- | :--- |
-| **Agent $\rightarrow$ Manager (Telemetry)** | TCP/UDP 1514 | Symmetric Encryption (AES-128 / Blowfish). Key size: 128-bit key negotiated from the pre-shared agent key string stored in `/var/ossec/etc/client.keys`. | `wazuh-remoted` daemon handles encrypted payload framing. (Official doc: Wazuh Agent-Manager communication). |
-| **Agent Enrollment** | TCP 1515 | TLS 1.2+ encrypted tunnel | `wazuh-authd` daemon verifies password/token and issues unique agent ID & 128-bit key. |
+| **Agent $\rightarrow$ Manager (Telemetry)** | TCP/UDP 1514 | Symmetric encryption (AES-128 or Blowfish). The 128-bit key is derived from the shared agent string in `/var/ossec/etc/client.keys`. | `wazuh-remoted` daemon handles encrypted payload framing. |
+| **Agent Enrollment** | TCP 1515 | Standard TLS 1.2+ encryption | `wazuh-authd` daemon verifies password/token and generates unique agent ID & key. |
 | **Active Response (AR)** | TCP 1514 (Internal channel) | Encrypted message within the persistent agent session | Manager sends an internal AR control message: `(msg_to_agent) [] AR_command JSON_payload`. |
 | **Manager $\rightarrow$ Indexer** | HTTPS / Port 9200 | TLS 1.3 / Mutual TLS (mTLS) with internal x509 certs | OpenSearch REST API indexing via `Filebeat-oss` / native output. |
 | **Dashboard $\rightarrow$ Indexer/Manager**| HTTPS / Port 443, 55000 | TLS 1.3 with Basic Auth & JWT tokens | Node.js Dashboard app queries OpenSearch (9200) and Wazuh Manager API (55000). |
 
 ---
 
-## 3. Supported Wazuh 4.8 Active Response Architecture
+## 3. Supported Wazuh 4.14.10 Active Response Architecture
 
-Active Response in Wazuh 4.8 operates via predefined agent-side binaries communicating through JSON over standard input (stdin) and standard output (stdout):
+Active Response in Wazuh 4.14.10 operates via predefined agent-side binaries communicating through JSON over standard input (stdin) and standard output (stdout):
 
 ```mermaid
 sequenceDiagram
@@ -108,8 +108,8 @@ sequenceDiagram
     Backend->>Backend: Append to Immutable Audit Log & Update Incident State
 ```
 
-### 3.1 Wazuh 4.8 JSON Input Schema (Stdin)
-When an Active Response command executes on the agent, Wazuh 4.8 pipes a structured JSON document to the script's standard input (`stdin`):
+### 3.1 Wazuh 4.14.10 JSON Input Schema (Stdin)
+When an Active Response command executes on the agent, Wazuh pipes a structured JSON document to the script's standard input (`stdin`):
 ```json
 {
   "version": 1,

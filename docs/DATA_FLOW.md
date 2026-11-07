@@ -4,18 +4,18 @@
 
 The complete lifecycle flows across 6 discrete, resilient stages:
 1. **Simulation** (Controlled execution on VM 2 via Atomic Red Team).
-2. **Telemetry Ingestion & Detection** (Linux Auditd $\rightarrow$ Wazuh Agent $\rightarrow$ Wazuh Manager custom XML rules).
+2. **Telemetry Ingestion & Detection** (Linux Auditd $\rightarrow$ Wazuh 4.14.10 Agent $\rightarrow$ Wazuh Manager custom XML rules).
 3. **Alert Ingestion & Forwarding** (Manager writes `/var/ossec/logs/alerts/alerts.json` $\rightarrow$ SentinelOps File Tailer $\rightarrow$ FastAPI Webhook).
 4. **PostgreSQL Deduplication & Normalization** (Sliding-window duplicate suppression in DB).
 5. **Enrichment & Incident Creation** (Asset context + MITRE technique info + Threat Intel fixtures $\rightarrow$ Incident state machine).
-6. **SOAR Active Response & Audit** (Allowlisted playbook $\rightarrow$ HITL approval gate $\rightarrow$ Wazuh 4.8 AR stdin JSON $\rightarrow$ Append-only audit record).
+6. **SOAR Active Response & Audit** (Allowlisted playbook $\rightarrow$ HITL approval gate $\rightarrow$ Wazuh 4.14.10 AR stdin JSON $\rightarrow$ Append-only audit record).
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Analyst as Analyst (Browser on Win11)
     participant Victim as VM 2: Victim (Auditd / Agent)
-    participant Wazuh as VM 1: Wazuh 4.8 Manager (Rule Engine)
+    participant Wazuh as VM 1: Wazuh 4.14.10 Manager (Rule Engine)
     participant Tailer as VM 1: Reliable Alert Tailer (Durable Checkpoint)
     participant Backend as VM 1: FastAPI Backend
     participant DB as VM 1: PostgreSQL 16
@@ -25,7 +25,7 @@ sequenceDiagram
     Victim->>Victim: Kernel executes process, Auditd generates SYSCALL/EXECVE
     
     Note over Victim, Wazuh: Step 2: Telemetry Ingestion & SIEM Detection
-    Victim->>Wazuh: Stream telemetry over Wazuh Protocol (TCP 1514, 128-bit AES/Blowfish)
+    Victim->>Wazuh: Stream telemetry over Wazuh Protocol (TCP 1514, Symmetric 128-bit key)
     Wazuh->>Wazuh: Decoder parses event -> Evaluates custom rules
     Wazuh->>Wazuh: Trigger Rule 100201 (High / Severity 10)
     Wazuh->>Wazuh: Append JSON alert to /var/ossec/logs/alerts/alerts.json
@@ -50,7 +50,7 @@ sequenceDiagram
     Note over Analyst, Backend: Playbook is DISRUPTIVE -> Requires HITL Gate
     Analyst->>Backend: POST /api/v1/soar/executions/{id}/approve (Password + Reason)
     
-    Note over Backend, Victim: Step 5: Supported Wazuh 4.8 Active Response
+    Note over Backend, Victim: Step 5: Supported Wazuh 4.14.10 Active Response
     Backend->>Wazuh: PUT /active-response?agents_list=001 (Command: firewall-drop0)
     Wazuh->>Victim: Encrypted AR control message over TCP 1514
     Victim->>Victim: /var/ossec/active-response/bin/firewall-drop receives JSON via stdin
@@ -90,7 +90,7 @@ To handle realistic operational failures without claiming unachievable "zero dat
 ```
 
 ### 2.1 Durable Offset Checkpointing & State File
-The tailer daemon tracks its exact reading progress in a persistent disk state file (`.tailer_checkpoint`):
+The tailer daemon tracks its reading progress in a persistent disk state file (`.tailer_checkpoint`):
 ```json
 {
   "file_path": "/var/ossec/logs/alerts/alerts.json",
@@ -100,12 +100,13 @@ The tailer daemon tracks its exact reading progress in a persistent disk state f
   "crc32_checksum": "a4f891b2"
 }
 ```
-- **Sync Timing**: The checkpoint file is written to a temporary file (`.tailer_checkpoint.tmp`) and atomically renamed after a batch is acknowledged (`200 OK`) by the backend, followed by an `fsync()` system call.
+- **Sync Timing**: The checkpoint file is written to `.tailer_checkpoint.tmp` and atomically renamed after a batch is acknowledged (`200 OK`) by the backend, followed by an `fsync()` system call.
+- **Durable Checkpoint Ordering Rule**: The checkpoint is **never advanced beyond safely persisted data**. If an HTTP delivery fails or a batch is queued, the offset remains locked at the last committed byte.
 - **Process Crash Recovery**: Upon restart, the tailer reads the checkpoint, verifies the file inode and size, and resumes reading from `byte_offset`.
 
 ### 2.2 Partial JSON Record Handling (Line-Buffer Accumulator)
 - Wazuh writes alerts as newline-delimited JSON (`ndjson`). If a file read occurs midway through a write, the tailer encounters an incomplete JSON string.
-- **Rule**: The tailer buffers characters until a trailing newline character (`\n`) is encountered and validates the string with `json.loads()`. If malformed, it pauses 50ms and retries reading to allow the OS flush to complete.
+- **Rule**: The tailer buffers characters until a trailing newline character (`\n`) is encountered and validates the string with `json.loads()`. If malformed, it pauses 50ms and retries reading to allow the OS flush to complete. If a record remains corrupt after 3 retries, it is written to `.tailer_corrupt.log` for offline forensic review and skipped to prevent pipeline freezing.
 
 ### 2.3 Log Rotation & Truncation Detection
 - When Wazuh or `logrotate` rotates `alerts.json` (moving it to `alerts.json.1` or truncating):
@@ -119,12 +120,12 @@ The tailer daemon tracks its exact reading progress in a persistent disk state f
 - If the FastAPI backend or PostgreSQL database is offline:
   - The tailer halts checkpoint progression.
   - Diverts new incoming alerts to a local bounded SQLite spool queue (`/var/run/sentinelops/tailer_spool.db`).
-  - **Bounded Buffer Limit**: Spool is capped at **50 MB** (approximately 50,000 alerts). If the cap is reached, oldest non-critical alerts are dropped to prevent disk exhaustion, and a critical system event is logged.
+  - **Bounded Buffer Limit & Back-Pressure**: Spool is capped at **50 MB** (approximately 50,000 alerts). If the cap is reached, the tailer throttles ingestion and exerts back-pressure rather than silently dropping alerts; an operational alert is raised.
   - **Exponential Back-Pressure**: Retries HTTP POST with exponential backoff: $1\text{s} \rightarrow 2\text{s} \rightarrow 4\text{s} \rightarrow 8\text{s} \rightarrow 16\text{s} \rightarrow \text{max } 30\text{s}$.
   - When connection is restored, the tailer drains the disk spool in FIFO order before resuming live stream processing.
 
 ### 2.5 PostgreSQL Idempotency & Duplicate Handling
 Because the tailer guarantees **at-least-once** delivery, process restarts during transit may deliver an alert twice.
-- To achieve effective **exactly-once processing semantics**:
+- To achieve effective **idempotent processing semantics**:
   - The backend computes a deterministic hash: $\text{dedup\_hash} = \text{SHA256}(\text{rule.id} + \text{agent.id} + \text{data.audit.command} + \text{timestamp\_window})$.
   - An atomic `ON CONFLICT (dedup_hash) DO UPDATE` query increments `occurrence_count` and updates `last_seen_at` without duplicating incidents or corrupting data.

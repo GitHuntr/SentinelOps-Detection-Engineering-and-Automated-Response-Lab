@@ -20,7 +20,7 @@ SentinelOps operates on a defense-in-depth security model specifically tailored 
 | **Repudiation** | Operator denies approving disruptive host isolation. | JWT analyst identity, timestamp, IP, and approval justification immutably recorded in audit logs. |
 | **Information Disclosure** | Telemetry or lab credentials leak to public networks. | Hypervisor isolation (`SentinelOps-LabNet` is internal only, zero internet egress). |
 | **Denial of Service** | High-volume attack simulations exhaust host RAM or disk. | PostgreSQL 5-minute sliding-window deduplication, OpenSearch 14-day index cleanup, logrotate 3-day retention. |
-| **Elevation of Privilege** | Attacker exploits active response scripts via command injection. | **Zero-Shell Execution Architecture**: All parameters validated via Pydantic regex; native Wazuh Active Response scripts called with structured JSON. |
+| **Elevation of Privilege** | Attacker exploits active response scripts via command injection. | **Zero-Shell Execution Architecture**: All parameters validated via Pydantic regex; native Wazuh 4.14.10 Active Response scripts called with structured JSON. |
 
 ---
 
@@ -46,7 +46,7 @@ If an adversary crafts an IP or process name containing shell metacharacters (e.
        agent_id: constr(pattern=r"^[0-9]{3,5}$")
        process_id: conint(ge=1, le=4194304)
    ```
-3. **Supported Wazuh 4.8 Protocol**: Parameters are transmitted via the native Wazuh AR daemon directly to registered binaries over standard input (`stdin`) as a structured JSON object.
+3. **Supported Wazuh 4.14.10 Protocol**: Parameters are transmitted via the native Wazuh AR daemon directly to registered binaries over standard input (`stdin`) as a structured JSON object.
 
 ---
 
@@ -96,7 +96,7 @@ SentinelOps strictly bifurcates **safe operational rollback** from **destructive
    - The containment firewall script (`firewall-drop`) is explicitly programmed to **never block** management subnet traffic:
      - Allow: `192.168.56.0/24` (Host management) and `172.28.0.10:1514` (Wazuh telemetry/AR channel).
      - Block: All other inbound/outbound packets to the victim node.
-   - This ensures the Wazuh Agent connection remains active, allowing immediate automated rollback.
+   - **Attacker Bypass Defense**: The host-only management network (`192.168.56.0/24`) is bound strictly to `VM 1 (SOC Server)` and the Windows 11 host. `VM 2 (Victim)` and `VM 3 (Kali)` do not have interfaces on `SentinelOps-MgmtNet`. Therefore, leaving management unblocked inside the victim firewall cannot create a bypass route for an attacker on `172.28.0.0/24`.
 2. **Standard Rollback Workflow**:
    - The analyst clicks **"Rollback Containment"** on the Incident workbench.
    - SentinelOps backend calls Wazuh API to issue the `"command": "delete"` action to the agent.

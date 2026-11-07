@@ -2,7 +2,7 @@
 
 ## 1. Roadmap Overview & Phasing Structure
 
-The project follows a 12-phase development plan. Each phase must satisfy all **Acceptance Criteria** and pass a formal verification gate before advancing to the next phase.
+The project follows an exact 12-phase development plan. Each phase must satisfy all **Acceptance Criteria** and pass a formal verification gate before advancing to the next phase.
 
 ```mermaid
 gantt
@@ -32,7 +32,7 @@ gantt
 
 ## 2. Phase-by-Phase Deliverables & Acceptance Criteria
 
-### Phase 00 — Architecture & Planning (Current Phase)
+### Phase 00 — Architecture & Planning (Current Phase - Final Baseline)
 - **Objective**: Design complete system, hardware sizing, network topology, threat model, and API specs for Windows 11 / VirtualBox constraints.
 - **Deliverables**: PRD, System Architecture, Infrastructure Architecture, Data Flow, Database Design, API Design, Security Architecture, Agent Workflow, Tech Stack, Roadmap, Changelog.
 - **Acceptance Criteria**: All 10 documents fully aligned with Windows 11, VirtualBox, 16 GB RAM, and <100 GB SSD constraints; user sign-off.
@@ -58,16 +58,16 @@ gantt
   - VM 1: Ubuntu Server 24.04 LTS (Static IPs: `192.168.56.10`, `172.28.0.10`).
   - VM 2: Ubuntu 24.04 LTS Victim (Static IP: `172.28.0.20`).
   - UFW firewall rules on VM 1 and VM 2.
-  - Emergency isolation script (`scripts/emergency_isolate.ps1`).
+  - Emergency isolation script (`scripts/emergency_poweroff.ps1`).
 - **Acceptance Criteria**: VM 1 communicates with VM 2 over internal lab net; Windows 11 host reaches VM 1 over host-only net; zero internet access from victim during lab runs.
 
 ---
 
 ### Phase 03 — Telemetry Collection & Processing
-- **Objective**: Deploy Wazuh single-node cluster on VM 1 and enroll VM 2 agent.
+- **Objective**: Deploy Wazuh 4.14.10 cluster on VM 1 and enroll VM 2 agent.
 - **Deliverables**:
-  - Wazuh Indexer (OpenSearch with heap `-Xms1800m -Xmx1800m`), Wazuh Manager, and Wazuh Dashboard running on VM 1.
-  - Wazuh Agent installed and registered on VM 2 over TCP 1514/1515.
+  - Wazuh Indexer 4.14.10 (OpenSearch with heap `-Xms1500m -Xmx1500m`), Wazuh Manager 4.14.10, and Wazuh Dashboard 4.14.10 running on VM 1.
+  - Wazuh Agent 4.14.10 installed and registered on VM 2 over TCP 1514/1515.
   - Linux `auditd` rules configured on VM 2 capturing execve, syscalls, and user auth.
   - Wazuh File Integrity Monitoring (FIM) configured for `/etc`, `/bin`, `/usr/bin`.
 - **Acceptance Criteria**: Wazuh Dashboard displays VM 2 in `Active` status; process creation events appear in Wazuh events index.
@@ -92,7 +92,7 @@ gantt
 - **Objective**: Build FastAPI modular monolith, PostgreSQL schema, and alert ingestion tailer.
 - **Deliverables**:
   - PostgreSQL 16 database schemas with Alembic migrations.
-  - Local log tailer service forwarding `/var/ossec/logs/alerts/alerts.json` to FastAPI via HTTP POST + HMAC.
+  - Local log tailer daemon forwarding `/var/ossec/logs/alerts/alerts.json` to FastAPI via HTTP POST + HMAC with durable checkpointing and bounded spooling.
   - Ingestion deduplication engine in PostgreSQL (5-minute sliding window).
   - Incident promotion logic for High/Critical alerts.
 - **Acceptance Criteria**: Tailer recovers from byte offset on restart; duplicate alerts increment `occurrence_count` without creating duplicate incidents; unit tests pass with $\ge 80\%$ coverage.
@@ -124,7 +124,7 @@ gantt
 - **Deliverables**:
   - Playbook registry (`pb-isolate-host`, `pb-kill-proc`, `pb-collect-procs`).
   - Human-in-the-Loop (HITL) approval API with two-step affirmative confirmation.
-  - Wazuh Active Response integration scripts (`custom-ar` on VM 2) using structured JSON inputs.
+  - Wazuh 4.14.10 Active Response integration scripts (`custom-ar` on VM 2) using JSON stdin/stdout protocols.
   - Append-only audit logger in PostgreSQL with SHA-256 cryptographic chaining.
   - Emergency Kill Switch (`/api/v1/soar/emergency-abort`).
 - **Acceptance Criteria**: Disruptive actions refuse execution without valid human approval; command injection payloads rejected with HTTP 422; audit logs verifiably immutable.

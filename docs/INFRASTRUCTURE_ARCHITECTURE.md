@@ -2,7 +2,7 @@
 
 ## 1. Physical Host & Virtualization Architecture
 
-The entire lab runs on a Windows 11 host with 16 GB physical RAM and <100 GB available SSD space, virtualized using Oracle VirtualBox.
+The entire lab runs on a Windows 11 host with 16 GB physical RAM and <100 GB available SSD space, virtualized using Oracle VirtualBox 7.x.
 
 ```mermaid
 graph TD
@@ -29,56 +29,59 @@ graph TD
 
 ## 2. Realistic Staged Resource Planning (Windows 11 / 16 GB Physical RAM)
 
-The Windows 11 host OS requires a **guaranteed 6.0 GB to 8.0 GB RAM headroom** to support OS services, VSCode/IDE, browser tabs, Git, background antivirus, and the VirtualBox hypervisor process overhead. 
+The Windows 11 host OS requires a **guaranteed 8.0 GB to 10.0 GB RAM headroom** to support OS services, VSCode/IDE, browser tabs, Git, background antivirus, and the VirtualBox hypervisor process overhead.
 
-To prevent physical RAM exhaustion and host paging/swapping, SentinelOps establishes a **Strict Staged Deployment Strategy**:
+> [!WARNING]
+> Running all components inside a **6.0 GB RAM VM is a constrained, experimental lab configuration**, not an enterprise-supported topology. It requires explicit JVM heap tuning and component scheduling.
+
+To maintain physical system stability, SentinelOps establishes a **Strict Staged Deployment Strategy**:
 
 ```
-Mode 1: SIEM & Ingestion Baseline (VM 1 Only)
+Stage 1: SIEM & Platform Baseline (VM 1 Only)
 ┌─────────────────────────────────┬─────────────────────────────────┐
 │ Windows 11 Host: 10.0 GB RAM    │ VM 1 (SOC Server): 6.0 GB RAM   │
-│ (Development, Browser, IDE)     │ (Wazuh Stack + FastAPI + PG16)  │
+│ (Development, Browser, IDE)     │ (Tuned Wazuh 4.14.10 + PG16)    │
 └─────────────────────────────────┴─────────────────────────────────┘
 
-Mode 2: Live Detection & ART Emulation (VM 1 + VM 2)
+Stage 2: Live Detection & ART Emulation (VM 1 + VM 2)
 ┌─────────────────────────────────┬───────────────────┬─────────────┐
 │ Windows 11 Host: 8.0 GB RAM     │ VM 1: 6.0 GB RAM  │ VM 2: 2.0 GB│
-│ (Browser, IDE, Git)             │ (Tuned JVM Heap)  │ (Victim)    │
+│ (Browser, IDE, Git)             │ (Experimental)    │ (Victim)    │
 └─────────────────────────────────┴───────────────────┴─────────────┘
 
-Mode 3: External Exploitation Scenario (Sequential Mode)
+Stage 3: External Multi-Node Emulation (Sequential Mode)
 ┌─────────────────────────────────┬───────────────────┬─────────────┐
-│ Windows 11 Host: 8.0 GB RAM     │ VM 2: 2.0 GB RAM  │ VM 3: 2.0 GB│
-│ (VM 1 paused or offline)        │ (Victim Target)   │ (Kali Linux)│
+│ Windows 11 Host: 12.0 GB RAM    │ VM 2: 2.0 GB RAM  │ VM 3: 2.0 GB│
+│ (VM 1 is SHUT DOWN or PAUSED)   │ (Victim Target)   │ (Kali Linux)│
 └─────────────────────────────────┴───────────────────┴─────────────┘
-*Note: VM 1, VM 2, and VM 3 NEVER run simultaneously on 16 GB host RAM.*
+*Rule: VM 1 (SOC), VM 2 (Victim), and VM 3 (Kali) NEVER run simultaneously.*
 ```
 
 ### 2.1 Staged Operating Profiles
 
 | Profile Name | Active Virtual Machines | RAM Allocation Breakdown | Host RAM Headroom | Operational Rules & Constraints |
 | :--- | :--- | :--- | :--- | :--- |
-| **Profile 1: SIEM & Platform Baseline** | **VM 1 Only** (SOC Server) | • Windows 11: **10.0 GB**<br>• VM 1: **6.0 GB** | **10.0 GB Free** | Rule development, backend coding, dashboard testing. VM 2 and Kali remain powered off. |
-| **Profile 2: Live Detection & ART Emulation** | **VM 1 + VM 2** (SOC + Victim) | • Windows 11: **8.0 GB**<br>• VM 1: **6.0 GB**<br>• VM 2: **2.0 GB** | **8.0 GB Free** | Atomic Red Team runs locally on VM 2. SIEM detects and SOAR initiates containment. Total committed RAM: 8.0 GB (VMs). Preserves 8.0 GB for Windows. |
-| **Profile 3: External Multi-Node Emulation** | **VM 2 + VM 3 (Sequential)** | • Windows 11: **8.0 GB**<br>• VM 2: **2.0 GB**<br>• VM 3: **2.0 GB** | **12.0 GB Free** | If Kali is used to generate network traffic, VM 1 is paused or offline to capture raw PCAP, or run sequentially. |
+| **Profile 1: SIEM & Ingestion Baseline** | **VM 1 Only** (SOC Server) | • Windows 11: **10.0 GB**<br>• VM 1: **6.0 GB** | **10.0 GB Free** | Rule development, backend coding, dashboard testing. VM 2 and Kali remain powered off. |
+| **Profile 2: Live Detection & ART Emulation** | **VM 1 + VM 2** (SOC + Victim) | • Windows 11: **8.0 GB**<br>• VM 1: **6.0 GB**<br>• VM 2: **2.0 GB** | **8.0 GB Free** | Atomic Red Team runs locally on VM 2. SIEM detects and SOAR initiates containment. Total committed RAM: 8.0 GB (VMs). Preserves 8.0 GB for Windows. Kali is powered off. |
+| **Profile 3: External Multi-Node Emulation** | **VM 2 + VM 3 (Sequential)** | • Windows 11: **12.0 GB**<br>• VM 2: **2.0 GB**<br>• VM 3: **2.0 GB** | **12.0 GB Free** | If Kali is used to generate network traffic, VM 1 is paused or shut down. Telemetry/PCAP is captured locally on VM 2, then replayed or analyzed sequentially. |
 
 ---
 
-## 3. Storage Sizing, Retention & Validation Thresholds
+## 3. Storage Sizing, Retention & Validation Thresholds (<100 GB SSD Boundary)
 
 All disk, EPS, and log volume estimates are **pre-operational estimates subject to empirical validation** in Phase 02/03.
 
 ### 3.1 Storage Allocations & Ceilings
 - **Host Free Disk Boundary**: Maintain a minimum of **20 GB unallocated host SSD space** at all times.
 - **Dynamic Virtual Disks (VDI)**:
-  - VM 1 (SOC Server): Max ceiling 45 GB dynamic (initial disk image: ~12 GB).
-  - VM 2 (Victim Endpoint): Max ceiling 15 GB dynamic (initial disk image: ~5 GB).
+  - VM 1 (SOC Server): Max ceiling 45 GB dynamic (initial disk image: ~12–14 GB).
+  - VM 2 (Victim Endpoint): Max ceiling 15 GB dynamic (initial disk image: ~5–6 GB).
   - VM 3 (Kali Linux): Existing VM image (~18 GB).
-- **Initial Total Disk Consumed**: ~35 GB (leaving >50 GB free on the host).
+- **Initial Total Disk Consumed**: ~35–38 GB (leaving >50 GB free on the host).
 
-### 3.2 Estimated Telemetry Volume & Retention Policy
-- **Estimated EPS**: Baseline idle ~1–3 EPS; active Atomic Red Team test ~15–30 EPS.
-- **Estimated Ingest Volume**: ~150–250 MB raw JSON logs per lab day.
+### 3.2 Estimated Telemetry Volume & Retention Policy (To Be Validated)
+- **Estimated EPS**: Baseline idle ~1–3 EPS; active Atomic Red Team test bursts ~15–30 EPS.
+- **Estimated Ingest Volume**: ~150–250 MB raw JSON logs per active lab day.
 - **OpenSearch Index Retention**: 14-day rolling retention ceiling (estimated $\le 3.5\text{ GB}$).
 - **Logrotate Policy**: Wazuh Manager `/var/ossec/logs/alerts/` and PostgreSQL WAL rotated daily with a 3-day max retention.
 
