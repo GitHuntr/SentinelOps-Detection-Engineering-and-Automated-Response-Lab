@@ -30,7 +30,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-.venv
+.venv/
 venv/
 ENV/
 env/
@@ -64,6 +64,12 @@ frontend/build/
 *.log
 VBoxGuestAdditions_*
 
+# Tailer Daemon Runtime & State
+.tailer_checkpoint*
+.tailer_spool*
+.tailer_corrupt*
+*.pid
+
 # Operating System & IDE
 .DS_Store
 Thumbs.db
@@ -72,8 +78,3 @@ desktop.ini
 .vscode/
 *.swp
 *.swo
-
-# Local Tailer Offset and Runtime state
-.tailer_offset
-*.pid
-
